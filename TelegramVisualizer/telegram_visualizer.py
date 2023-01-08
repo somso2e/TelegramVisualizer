@@ -7,6 +7,7 @@ import plotly.io as pio
 from plotly.subplots import make_subplots
 import typing
 import os
+import numpy as np
 
 
 class TelegramVisualizer():
@@ -22,29 +23,79 @@ class TelegramVisualizer():
 
     def __init__(self,
                  chat_history_path: str,
-                 show_pie_charts: bool = True,
-                 show_timeseries_plot: bool = True,
+                 plot_pie_charts: bool = True,
+                 plot_timeseires: bool = True,
                  plot_total_messages_only: bool = False,
-                 colors: typing.List[str] = plotly.colors.qualitative.Plotly,
-                 template: str = "plotly_dark",
                  timeseries_rolling_average_window: int = 7,
-                 dimensions: typing.Tuple[int, int] = None,
-                 cache_dataframes: bool = True,
+                 image_size: typing.Tuple[int, int] = None,
+                 columns: int = 3,
+                 colors: typing.List[str] = plotly.colors.qualitative.Plotly,
+                 dark_mode: bool = True,
+                 export_data: bool = True,
                  restore_from_cache: bool = True,
                  ):
+        """
+        # TelegramVisualizer
+        
+        This allows you to create cool and interesting stats and interactive graphs from your Telegram chats.
+
+        Parameters
+        ----------
+        chat_history_path : str
+            Path of the folder containing the `result.json` file or the file itself 
+        plot_pie_charts : bool, optional
+            If `True`(default), then pie chart of number of messages and differnt medias will be shown, by default True
+        plot_timeseires : bool, optional
+            If `True`(default), then the graph of "number of messages by date" will be shown, by default True
+        plot_total_messages_only : bool, optional
+            If `True`, then only the total messages/date will be shown, by default False
+        timeseries_rolling_average_window : int, optional
+            Rolling average window in number of days, by default 7 days
+        image_size : (int, int), optional
+            The size of the image/HTML in pixels. If `None`, then it will be choosen automatically, by default None
+        columns: int, optional
+            Number of columns for pie charts, by default 3 
+        colors : list[str], optional
+            A `list` of colors to be used to indicate users, by default plotly.colors.qualitative.Plotly
+        dark_mode : bool, optional
+            If `True`(default), dark mode by default True
+        export_data : bool, optional
+            If `True`(default), then `.csv` files are generated from `result.json` file.
+            This allows for faster run time for later, by default True
+        restore_from_cache : bool, optional
+            If `True`(default), then data is loaded from , by default True
+        """
         self.chat_history_path = chat_history_path
-        self.dimensions = dimensions
-        self.timeseries_rolling_average_window = timeseries_rolling_average_window
-        self.colors = colors
+
+        self.plot_pie_charts = plot_pie_charts
+
+        self.plot_timeseires = plot_timeseires
         self.plot_total_messages_only = plot_total_messages_only
-        self.show_timeseires_plot = show_timeseries_plot
-        self.show_pie_charts = show_pie_charts
+        self.timeseries_rolling_average_window = timeseries_rolling_average_window
+
+        if plot_pie_charts == False and plot_timeseires == False:
+            raise(ValueError(
+                "You can't have both pie charts and timeseries graph turned off."))
+
+        self.image_size = image_size
+        if columns <= 0:
+            raise(ValueError("Number of columns can't be les"))
+        self.columns = columns
+
+        self.colors = colors
+        self.dark_mode = dark_mode
+
+        if dark_mode:
+            pio.templates.default = "plotly_dark"
+        else:
+            pio.templates.default = "plotly_white"
 
         self.legend_group = 1
+        if os.path.splitext(chat_history_path)[1] == "result.json":
+            self.dir_name = os.path.dirname(chat_history_path)
+        else:
+            self.dir_name = chat_history_path
 
-        pio.templates.default = template
-
-        self.dir_name = chat_history_path
         self.messages_df_path = os.path.join(
             self.dir_name, "messages.csv")
         self.media_count_df_path = os.path.join(
@@ -61,13 +112,12 @@ class TelegramVisualizer():
 
                 print("Data loaded from cached .csv files")
             else:
-                print("No cache found. Will read from .json file.")
                 self.__generate_df()
 
         else:
             self.__generate_df()
 
-        if cache_dataframes:
+        if export_data:
             self.timeseries_df.to_csv(self.messages_df_path)
             self.media_count_df.to_csv(self.media_count_df_path)
 
@@ -152,7 +202,7 @@ class TelegramVisualizer():
                              mode="lines",
                              name=column,
                              legendgroup=legendgroup,
-                             marker=dict(color=self.colors[i]))
+                             marker=dict(color=self.colors[i % len(self.colors)]))
 
     def get_media_pie_charts(self, df: pd.DataFrame):
         pie_charts = []
@@ -173,44 +223,68 @@ class TelegramVisualizer():
 
     def generate_plots(self):
 
-        pie_charts, titles = self.get_media_pie_charts(self.media_count_df)
+        if self.plot_pie_charts:
+            pie_charts, titles = self.get_media_pie_charts(self.media_count_df)
+            n_small_pies = len(pie_charts)-1
 
-        n_rows = -(-len(pie_charts)//2)
+            n_columns = min(self.columns, n_small_pies+2)
 
-        specs = []
-        if self.show_pie_charts:
-            if len(pie_charts) % 2 == 0:
-                specs = [[{"type": "domain"}, {"type": "domain"}]
-                         for _ in range(n_rows)]
-            else:
-                specs = [[{"type": "domain"}, {"type": "domain"}]
-                         for _ in range(n_rows-1)]
-                specs.append([{"colspan": 2, "type": "domain"}, None])
+            msg_pie_dim = (min(n_columns, 2), min(n_columns, 2))
+            cells_occupied_by_pies = n_small_pies + \
+                msg_pie_dim[0] * msg_pie_dim[1]
+            n_rows = int(np.ceil(cells_occupied_by_pies/n_columns)) + \
+                self.plot_timeseires
 
-        if self.show_timeseires_plot:
-            specs.append([{"colspan": 2, "type": "xy"}, None])
+            specs = np.full((n_rows, n_columns), None, dtype=object)
 
-        subplot_titles = titles+["Date"]
+            # spec of the bigger messges pie chart
+            specs[:msg_pie_dim[0], :msg_pie_dim[1]
+                  ] = "RESERVED FOR MESSAGES PIE"
+
+            specs[0, 0] = {"type": "domain",
+                           "rowspan": msg_pie_dim[0],
+                           "colspan": msg_pie_dim[1], }
+            specs = specs.reshape(-1)
+            p = 0
+            for i in range(specs.shape[0]):
+                if specs[i] is None:
+                    specs[i] = {"type": "pie"}
+                    p += 1
+                if p == n_small_pies:
+                    break
+            specs[specs == "RESERVED FOR MESSAGES PIE"] = None
+            specs = specs.reshape((n_rows, n_columns))
+
+            if self.plot_timeseires:
+                specs[-1, 0] = {"colspan": n_columns, "type": "xy"}
+
+        else:
+            specs = np.array([[{"type": "xy"}]])
+
+
+        inds = np.argwhere(specs != None)
+
+        subplot_titles = titles
         self.fig = make_subplots(
-            rows=len(specs), cols=2,
-            specs=specs,
-            subplot_titles=subplot_titles
-        )
-        column = 1
-        row = 1
-        if self.show_pie_charts:
-            for i, pie_chart in enumerate(pie_charts):
-                column = i % 2+1
-                row = i // 2+1
-                self.fig.add_trace(pie_chart, row=row, col=column)
-            row += 1
-            column -= 1
+            rows=int(n_rows), cols=int(n_columns),
+            specs=specs.tolist(),
+            subplot_titles=subplot_titles,
+            vertical_spacing=0.02,
+            horizontal_spacing=0.02,
 
-        if self.show_timeseires_plot:
+        )
+
+        if self.plot_pie_charts:
+
+            for i, pie_chart in enumerate(pie_charts):
+                row, column = inds[i]
+                self.fig.add_trace(pie_chart, row=row+1, col=column+1)
+
+        if self.plot_timeseires:
             timeseries_df_avg = self.apply_rolling_average(self.timeseries_df)
-            # fig.update_traces(marker_cmin=0)
+            row, column = inds[-1]
             for timeseries_plot in self.get_timeseries_plot(timeseries_df_avg):
-                self.fig.add_trace(timeseries_plot, row=row, col=column)
+                self.fig.add_trace(timeseries_plot, row=row+1, col=column+1)
 
             self.fig.update_xaxes(
                 rangeslider_visible=True,
@@ -230,21 +304,25 @@ class TelegramVisualizer():
                 ),
             )
 
-        if self.dimensions is None:
-            width = 1000
-            height = 400*len(specs)
+        if self.image_size is None:
+            width = 500 * specs.shape[1]
+            height = 500*specs.shape[0]
         else:
-            width = self.dimensions[0]
-            width = self.dimensions[1]
+            width = self.image_size[0]
+            height = self.image_size[1]
 
-        self.fig.update_layout(width=width,
+        self.fig.update_layout(autosize=False,
+                               width=width,
                                height=height,
-                               legend_tracegroupgap=height*0.72,
-                               xaxis_rangeselector_font_color='black',
-                               xaxis_rangeselector_activecolor='#555555',
-                               xaxis_rangeselector_bgcolor='#202124',
-                               coloraxis=dict(colorscale='RdBu'),
-                               )
+                               legend_tracegroupgap=height*(n_rows-1)/n_rows*0.9,
+                               margin=dict(l=20, r=0, t=20, b=0))
+
+        if self.dark_mode:
+            self.fig.update_layout(xaxis_rangeselector_font_color='black',
+                                   xaxis_rangeselector_activecolor='#555555',
+                                   xaxis_rangeselector_bgcolor='#202124')
+
+        self.fig.update_yaxes(automargin=True)
 
     def plot(self):
         self.fig.show()
@@ -254,7 +332,13 @@ class TelegramVisualizer():
         if extension == ".html":
             self.fig.write_html(save_path)
         elif extension in [".png", ".jpeg", ".jpg", ".webp", ".svg", ".pdf", ".eps"]:
+            try:
+                import kaleido
+            except ImportError as e:
+                raise(ImportError(
+                    "You need the kaleido package to export as static image.\nUse \"pip install kaleido\""))
             pio.kaleido.scope.mathjax = None
+            self.fig.update_xaxes(rangeselector=None)
             self.fig.write_image(save_path)
         else:
             raise(ValueError("Invalid file format: {}".format(extension)))
