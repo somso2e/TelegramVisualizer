@@ -13,10 +13,11 @@ import numpy as np
 class TelegramVisualizer():
     MEDIA_TYPES = {"message": "Messages",
                    "photo": "Photos",
+                   "file": "Files",
                    "voice_message": "Voice Messages",
-                   "audio_file": "Audio Files",
+                   "audio_file": "Audio",
                    "video_message": "Video Messages",
-                   "video_file": "Video Files",
+                   "video_file": "Video",
                    "sticker": "Stickers",
                    "animation": "Animations(GIF)",
                    }
@@ -36,7 +37,7 @@ class TelegramVisualizer():
                  ):
         """
         # TelegramVisualizer
-        
+
         This allows you to create cool and interesting stats and interactive graphs from your Telegram chats.
 
         Parameters
@@ -91,11 +92,11 @@ class TelegramVisualizer():
             pio.templates.default = "plotly_white"
 
         self.legend_group = 1
-        if os.path.splitext(chat_history_path)[1] == "result.json":
+        if os.path.basename(chat_history_path) == "result.json":
             self.dir_name = os.path.dirname(chat_history_path)
         else:
             self.dir_name = chat_history_path
-
+        print(self.dir_name)
         self.messages_df_path = os.path.join(
             self.dir_name, "messages.csv")
         self.media_count_df_path = os.path.join(
@@ -124,7 +125,7 @@ class TelegramVisualizer():
         self.generate_plots()
 
     def __generate_df(self):
-        json_path = os.path.join(self.chat_history_path, "result.json")
+        json_path = os.path.join(self.dir_name, "result.json")
         if not os.path.exists(json_path):
             raise(ValueError(
                 "No result.json file could be found in {} directory".format(self.dir_name)))
@@ -173,7 +174,9 @@ class TelegramVisualizer():
 
             if "media_type" in msg:
                 self.media_count_df[self.MEDIA_TYPES[msg["media_type"]]][user] += 1
-            if "photo" in msg:
+            elif "mime_type" in msg:
+                self.media_count_df["Files"][user] += 1
+            elif "photo" in msg:
                 self.media_count_df["Photos"][user] += 1
 
         self.media_count_df[self.MEDIA_TYPES["message"]
@@ -261,7 +264,6 @@ class TelegramVisualizer():
         else:
             specs = np.array([[{"type": "xy"}]])
 
-
         inds = np.argwhere(specs != None)
 
         subplot_titles = titles
@@ -314,7 +316,8 @@ class TelegramVisualizer():
         self.fig.update_layout(autosize=False,
                                width=width,
                                height=height,
-                               legend_tracegroupgap=height*(n_rows-1)/n_rows*0.9,
+                               legend_tracegroupgap=height *
+                               (n_rows-1)/n_rows*0.9,
                                margin=dict(l=20, r=0, t=20, b=0))
 
         if self.dark_mode:
@@ -322,7 +325,6 @@ class TelegramVisualizer():
                                    xaxis_rangeselector_activecolor='#555555',
                                    xaxis_rangeselector_bgcolor='#202124')
 
-        self.fig.update_yaxes(automargin=True)
 
     def plot(self):
         self.fig.show()
@@ -337,7 +339,6 @@ class TelegramVisualizer():
             except ImportError as e:
                 raise(ImportError(
                     "You need the kaleido package to export as static image.\nUse \"pip install kaleido\""))
-            pio.kaleido.scope.mathjax = None
             self.fig.update_xaxes(rangeselector=None)
             self.fig.write_image(save_path)
         else:
